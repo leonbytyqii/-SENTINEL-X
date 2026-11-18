@@ -43,3 +43,6 @@ __pycache__/
 *.bak3
 *.bak-*
 *.backup
+
+# Old backup snapshots
+backups/

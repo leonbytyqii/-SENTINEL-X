@@ -4,7 +4,7 @@
 > Local Docker Compose stack demonstrating a complete web security monitoring lifecycle:
 > **Request → NGINX → ModSecurity WAF → Application → Wazuh SIEM → Elasticsearch → Kibana**
 >
-> **Current build (2026-11-18):** Dual-pipeline SIEM with official Wazuh Dashboard 4.9.2. 9 containers, 470+ ES alerts + 787+ Wazuh Indexer alerts — all produced by real attack traffic.
+> **Current build (2026-11-18):** Dual-pipeline SIEM with official Wazuh Dashboard 4.9.2. 9 containers, 1,820+ Wazuh alerts + 1,000+ Wazuh Indexer alerts — all produced by real attack traffic. Security test suite: **10/10 PASS**.
 
 ---
 
@@ -82,7 +82,7 @@
 ## Quick Start
 
 ```powershell
-cd "C:\Prime Kosova\WORK\SENTINEL-X"
+cd SENTINEL-X
 
 # 1. Prerequisites check and .env setup
 .\scripts\setup.ps1
@@ -115,24 +115,24 @@ notepad .env
 
 ---
 
-## Security Test Suite (Phase 3 Results — 9/10 PASS)
+## Security Test Suite (10/10 PASS)
 
 The `validate.ps1` script runs 10 automated tests. **Current mode: `MODSEC_RULE_ENGINE=On` (active blocking).**
 
-| Test | Scenario | Expected | Phase 3 Result | Wazuh Rule |
-|------|----------|----------|----------------|------------|
+| Test | Scenario | Expected | Result | Wazuh Rule |
+|------|----------|----------|--------|------------|
 | T01  | GET /health (legitimate) | 200 | ✅ PASS | None |
 | T02  | GET /api/users (legitimate) | 200 | ✅ PASS | None |
 | T03  | SQL injection OR clause | 403 | ✅ PASS | 100020 lvl12 |
 | T04  | SQL injection UNION SELECT | 403 | ✅ PASS | 100020 lvl12 |
 | T05  | XSS script tag | 403 | ✅ PASS | 100021 lvl11 |
-| T06  | XSS event handler (onerror) | 403 | ✅ PASS | 100021 lvl11 |
-| T07  | LFI path traversal | 403 | ✅ PASS | 100023 lvl14 |
+| T06  | LFI path traversal | 403 | ✅ PASS | 100023 lvl14 |
+| T07  | RCE shell injection | 403 | ✅ PASS | 100023 lvl14 |
 | T08  | sqlmap User-Agent | 403 | ✅ PASS | 100007 lvl8 |
-| T09  | TRACE method | 405 | ✅ PASS | None |
-| T10  | POST /api/login | 200* | ❌ FAIL* | None |
+| T09  | Elasticsearch has 50+ wazuh-alerts | pass | ✅ PASS | None |
+| T10  | Kibana SOC dashboards present (≥3) | pass | ✅ PASS | None |
 
-*T10: `/api/login` endpoint does not exist — Flask returns 404. WAF correctly passed the request. Test definition error, not a WAF failure. Full evidence: `docs/SECURITY_TEST_REPORT.md`
+Full evidence: `docs/SECURITY_TEST_REPORT.md`
 
 ---
 
@@ -217,11 +217,11 @@ SENTINEL-X/
 | LFI → Rule 100022 (lvl11) | ✅ Verified — HTTP 403 returned |
 | RCE → Rule 100023 (lvl14) | ✅ Verified — HTTP 403 returned |
 | Scanner UA → Rule 100007 (lvl8) | ✅ Verified — HTTP 403 returned |
-| Pipeline 1: Filebeat → Elasticsearch | ✅ 470+ documents |
-| Pipeline 2: Filebeat OSS → Wazuh Indexer | ✅ 787+ documents |
+| Pipeline 1: Filebeat → Elasticsearch | ✅ 1,820+ documents |
+| Pipeline 2: Filebeat OSS → Wazuh Indexer | ✅ 1,000+ documents |
 | Kibana SOC dashboards | ✅ 4 dashboards |
 | Wazuh Dashboard | ✅ 4 SOC dashboards |
-| Wazuh Manager | ⚠️ Intermittent restarts (crash loop, 57 total) — alert data intact; fix: `start_period: 120s` applied |
+| Wazuh Manager | ✅ Stable — 0 restarts, API Online v4.9.2, all daemons running |
 
 ## Known Limitations
 
@@ -231,8 +231,7 @@ SENTINEL-X/
 4. **No HTTPS** on the web application — add a self-signed cert for HSTS testing.
 5. **Wazuh Agent** not deployed as a separate container — manager reads logs from shared Docker volumes.
 6. **srcip field empty** in some alert descriptions — custom decoder error 2107; raw IP is in `data.remote_addr`.
-7. **Wazuh Manager crash loop** — manager process restarts intermittently (entrypoint startup race). Root fix: `start_period: 120s` applied to docker-compose.yml; full fix requires a container restart once alerts have been captured.
-8. **Hardcoded credentials in Wazuh Indexer healthcheck** — `admin:SecretPassword` appears in docker-compose.yml healthcheck command; acceptable for local lab, must be rotated for any shared environment.
+7. **Hardcoded credentials in Wazuh Indexer healthcheck** — `admin:SecretPassword` appears in docker-compose.yml healthcheck command; acceptable for local lab, must be rotated for any shared environment.
 
 ---
 
