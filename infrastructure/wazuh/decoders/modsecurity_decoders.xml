@@ -1,0 +1,31 @@
+<!-- SENTINEL-X: Wazuh Decoder - ModSecurity JSON audit log -->
+<!--
+  ModSecurity configured with SecAuditLogFormat JSON writes one JSON object per
+  blocked/flagged transaction. Each line starts with {"transaction".
+
+  After JSON_Decoder, deeply nested fields are accessible in rules as:
+    data.transaction.client_ip              - attacker IP
+    data.transaction.request.method         - HTTP method
+    data.transaction.request.uri            - requested URI
+    data.transaction.response.http_code     - HTTP response code (403 when blocked)
+    data.transaction.messages               - array of matched rule messages
+
+  For rule IDs inside the messages array, use <match> against the full log line
+  which is the raw JSON. Example: <match>"ruleId":"949110"</match>
+
+  The child decoder extracts srcip for Wazuh IP enrichment.
+-->
+
+<!-- Same JSON pre-processing as nginx: Wazuh strips JSON syntax before decoder chain.
+     ModSec JSON starts with {"transaction":{...}}; first pre-processed line is "transaction:{...".
+     Prematch "transaction" (no braces) catches it.
+-->
+<decoder name="sentinel-modsecurity">
+  <prematch>transaction</prematch>
+</decoder>
+
+<decoder name="sentinel-modsecurity-srcip">
+  <parent>sentinel-modsecurity</parent>
+  <regex offset="after_prematch">client_ip:(\d+\.\d+\.\d+\.\d+)</regex>
+  <order>srcip</order>
+</decoder>

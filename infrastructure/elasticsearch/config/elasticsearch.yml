@@ -1,0 +1,31 @@
+# SENTINEL-X – Elasticsearch configuration
+# Single-node lab deployment.
+# xpack.security is enabled with username/password but NO TLS (lab setting — documented in TECHNICAL-DECISIONS.md)
+
+cluster.name: sentinel-x-cluster
+node.name: sentinel-es01
+node.roles: [master, data, ingest]
+
+# ── Network ──────────────────────────────────────────────────────────────────
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+discovery.type: single-node
+
+# ── Security ─────────────────────────────────────────────────────────────────
+xpack.security.enabled: true
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+
+# ── License ──────────────────────────────────────────────────────────────────
+xpack.license.self_generated.type: basic
+
+# ── Action protection ────────────────────────────────────────────────────────
+# Prevents accidental deletion of all indices
+action.destructive_requires_name: true
+
+# ── Paths (inside container) ─────────────────────────────────────────────────
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs

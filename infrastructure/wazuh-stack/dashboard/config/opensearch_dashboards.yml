@@ -1,0 +1,26 @@
+# Wazuh Dashboard (OpenSearch Dashboards) — SENTINEL-X stack
+server.host: "0.0.0.0"
+server.port: 5601
+server.name: "wazuh-dashboard"
+
+# TLS for the dashboard server itself
+server.ssl.enabled: true
+server.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.key"
+server.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
+
+# Wazuh Indexer (OpenSearch) backend
+opensearch.hosts: ["https://wazuh-indexer:9200"]
+opensearch.ssl.verificationMode: certificate
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+opensearch.username: "kibanaserver"
+opensearch.password: "SecretPassword"
+
+# Dashboard security
+opensearch_security.multitenancy.enabled: false
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+
+# Default landing page — Wazuh app
+# /app/wazuh does not exist in 4.9.2; the registered app ID is wz-home
+uiSettings.overrides.defaultRoute: "/app/wz-home"
+
+# Telemetry — keys removed; not supported in this Wazuh Dashboard build

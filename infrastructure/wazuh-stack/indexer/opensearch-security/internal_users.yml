@@ -1,0 +1,52 @@
+---
+# Users for SENTINEL-X Wazuh Indexer
+# Passwords use bcrypt (cost 12). Change these before any external exposure.
+# LAB CREDENTIALS — not for production use.
+#
+# admin     : SecretPassword  (hash below)
+# kibanaserver: SecretPassword  (hash below)
+#
+# To regenerate hash: docker exec wazuh-indexer bash -c \
+#   "/usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh -p 'YourNewPass'"
+
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: true
+  backend_roles:
+    - "admin"
+  description: "Admin user"
+
+kibanaserver:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: true
+  description: "Wazuh Dashboard server user"
+
+kibanaro:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: false
+  backend_roles:
+    - "kibanauser"
+  description: "Read-only Kibana user"
+
+logstash:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: false
+  backend_roles:
+    - "logstash"
+  description: "Logstash/Filebeat ingest user"
+
+readall:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: false
+  backend_roles:
+    - "readall"
+
+snapshotrestore:
+  hash: "$2y$12$K/SpwjtB.wOHJ/Nc6GVRDuc1h0rM1DfvziFRNPtk27P.c4yDr9njO"
+  reserved: false
+  backend_roles:
+    - "snapshotrestore"

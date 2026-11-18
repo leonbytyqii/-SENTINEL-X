@@ -1,0 +1,26 @@
+<!-- SENTINEL-X – Wazuh Decoder: NGINX JSON access log -->
+<!-- Expects the json_access log format defined in sentinel.conf -->
+
+<decoder name="sentinel-nginx-access">
+  <prematch>{"@timestamp"</prematch>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>
+
+<!-- Extract key fields from JSON access log for rule matching -->
+<decoder name="sentinel-nginx-access-child">
+  <parent>sentinel-nginx-access</parent>
+  <use_own_name>true</use_own_name>
+  <json_null_field>discard</json_null_field>
+  <var name="json.remote_addr">srcip</var>
+  <var name="json.method">protocol</var>
+  <var name="json.uri">url</var>
+  <var name="json.status">status_code</var>
+  <var name="json.user_agent">extra_data</var>
+</decoder>
+
+<!-- NGINX error log decoder -->
+<decoder name="sentinel-nginx-error">
+  <prematch>^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}</prematch>
+  <regex>^(\S+ \S+) \[(\w+)\] \d+#\d+: (.+)$</regex>
+  <order>timestamp, log_level, extra_data</order>
+</decoder>

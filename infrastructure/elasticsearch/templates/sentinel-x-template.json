@@ -1,0 +1,65 @@
+{
+  "index_patterns": ["wazuh-alerts-*", "sentinel-nginx-*", "sentinel-modsec-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s",
+      "index.lifecycle.name": "sentinel-x-policy",
+      "index.lifecycle.rollover_alias": "wazuh-alerts"
+    },
+    "mappings": {
+      "dynamic": true,
+      "dynamic_date_formats": ["strict_date_optional_time", "yyyy/MM/dd HH:mm:ss"],
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "timestamp": { "type": "date", "format": "strict_date_optional_time||epoch_millis" },
+
+        "rule": {
+          "properties": {
+            "id":          { "type": "keyword" },
+            "level":       { "type": "integer" },
+            "description": { "type": "text" },
+            "groups":      { "type": "keyword" },
+            "mitre": {
+              "properties": {
+                "id":        { "type": "keyword" },
+                "tactic":    { "type": "keyword" },
+                "technique": { "type": "keyword" }
+              }
+            }
+          }
+        },
+
+        "agent": {
+          "properties": {
+            "id":   { "type": "keyword" },
+            "name": { "type": "keyword" },
+            "ip":   { "type": "ip" }
+          }
+        },
+
+        "data": {
+          "properties": {
+            "srcip":        { "type": "ip" },
+            "url":          { "type": "keyword" },
+            "method":       { "type": "keyword" },
+            "status":       { "type": "integer" },
+            "user_agent":   { "type": "text" },
+            "bytes_sent":   { "type": "long" },
+            "request_time": { "type": "float" }
+          }
+        },
+
+        "location": { "type": "keyword" },
+        "id":        { "type": "keyword" },
+        "full_log":  { "type": "text" }
+      }
+    }
+  },
+  "priority": 200,
+  "version": 1,
+  "_meta": {
+    "description": "SENTINEL-X index template for Wazuh alerts and security events"
+  }
+}

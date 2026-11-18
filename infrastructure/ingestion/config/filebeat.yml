@@ -1,0 +1,94 @@
+# SENTINEL-X – Filebeat configuration
+# Reads Wazuh alerts (JSON) and forwards to Elasticsearch.
+# Data flow: wazuh_logs volume → Filebeat → Elasticsearch wazuh-alerts-* index
+
+filebeat.inputs:
+
+  # ── Wazuh Alerts (primary security event stream) ─────────────────────────
+  - type: log
+    id: wazuh-alerts
+    enabled: true
+    paths:
+      - /var/ossec/logs/alerts/alerts.json
+    # Each Wazuh alert is a single JSON line
+    json.keys_under_root: true
+    json.add_error_key: false
+    json.overwrite_keys: true
+    # Tag events for index routing
+    tags: ["wazuh-alert", "sentinel-x"]
+    fields:
+      source: wazuh-manager
+      environment: sentinel-x
+    fields_under_root: false
+    # Only read new lines (don't re-read on restart — state tracked in filebeat_data volume)
+    scan_frequency: 5s
+    close_inactive: 2h
+    ignore_older: 24h
+
+  # ── Wazuh Archives (verbose log — disabled by default to save storage) ───
+  - type: log
+    id: wazuh-archives
+    enabled: false
+    paths:
+      - /var/ossec/logs/archives/archives.json
+    json.keys_under_root: true
+    json.add_error_key: false
+    tags: ["wazuh-archive", "sentinel-x"]
+
+# ── Processors ──────────────────────────────────────────────────────────────
+processors:
+  # Normalize @timestamp from Wazuh alert timestamp field
+  - timestamp:
+      field: timestamp
+      layouts:
+        - "2006 Jan 02 15:04:05"
+        - "2006-01-02T15:04:05.000Z"
+        - "2006-01-02T15:04:05Z"
+      test:
+        - "2024 Jan 15 10:30:00"
+      ignore_failure: true
+
+  # Drop internal Filebeat health events
+  - drop_event:
+      when:
+        has_fields: ['_filebeat_internal']
+
+# ── Output: Elasticsearch ────────────────────────────────────────────────────
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  username: "elastic"
+  password: "${ELASTICSEARCH_PASSWORD}"
+  # Index naming: wazuh-alerts-YYYY.MM.DD
+  index: "wazuh-alerts-%{+yyyy.MM.dd}"
+  # Bulk settings (balanced for lab environment)
+  bulk_max_size: 500
+  worker: 1
+  compression_level: 0
+  timeout: 60s
+
+# ── Index lifecycle management setup ─────────────────────────────────────────
+setup.ilm.enabled: false   # Using pre-created policy via elasticsearch init
+
+# ── Template setup ───────────────────────────────────────────────────────────
+setup.template.enabled: true
+setup.template.name: "wazuh-alerts"
+setup.template.pattern: "wazuh-alerts-*"
+setup.template.settings:
+  index.number_of_shards: 1
+  index.number_of_replicas: 0
+  index.refresh_interval: "5s"
+
+# ── Kibana (for dashboard setup — run once) ───────────────────────────────────
+setup.kibana:
+  host: "http://kibana:5601"
+  username: "elastic"
+  password: "${ELASTICSEARCH_PASSWORD}"
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging.level: info
+logging.to_files: false
+logging.to_stderr: true
+logging.selectors: []
+
+# ── Monitoring (self) ────────────────────────────────────────────────────────
+monitoring.enabled: false

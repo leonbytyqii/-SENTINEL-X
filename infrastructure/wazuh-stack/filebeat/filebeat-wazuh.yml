@@ -1,0 +1,32 @@
+# Filebeat config for Wazuh Indexer pipeline
+# Reads same alerts.json as the existing filebeat, ships to wazuh-indexer (OpenSearch).
+# Uses the Wazuh module (extracted from manager image) for correct index templates.
+
+filebeat.modules:
+  - module: wazuh
+    alerts:
+      enabled: true
+    archives:
+      enabled: false
+
+setup.template.json.enabled: true
+setup.template.overwrite: true
+setup.template.json.path: "/usr/share/filebeat/module/wazuh-template.json"
+setup.template.json.name: "wazuh-alerts-4.x"
+setup.template.name: "wazuh-alerts-4.x"
+setup.template.pattern: "wazuh-alerts-4.x-*"
+setup.ilm.enabled: false
+
+output.elasticsearch:
+  hosts: ["https://wazuh-indexer:9200"]
+  username: "admin"
+  password: "SecretPassword"
+  ssl.certificate_authorities: ["/etc/ssl/root-ca.pem"]
+  ssl.certificate: "/etc/ssl/wazuh-manager.pem"
+  ssl.key: "/etc/ssl/wazuh-manager.key"
+  ssl.verification_mode: "certificate"
+  index: "wazuh-alerts-4.x-%{+yyyy.MM.dd}"
+
+logging.level: info
+logging.to_stderr: true
+logging.metrics.enabled: false

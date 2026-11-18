@@ -1,0 +1,181 @@
+<!-- SENTINEL-X: Custom Wazuh Detection Rules -->
+<!--
+  Rule ID range: 100001-100099
+  Wazuh 4.9.2 confirmed behavior (from archives.json analysis 2026-11-12):
+  - log_format:json events: JSON plugin decoder (0006-json_decoders.xml) stores fields in
+    data.* in the archive output, but <field name="data.X"> rule conditions do NOT match
+    these fields. <decoded_as>json</decoded_as> also does not match.
+  - ONLY <match> against the raw log text works for log_format:json events.
+  - Base rules use <match> on a distinctive JSON key unique to that log source.
+  - Child rules use <match> on specific JSON values in the raw log text.
+  - nginx JSON: "status":403 (integer, unquoted) distinguishes blocked responses.
+  - ModSec JSON: "transaction": is the first key; "http_code":403 for blocked requests;
+    "ruleId":"941xxx for XSS, "ruleId":"942xxx for SQLi (in messages array).
+  - Rule 5107 "Syntax error on tag": parenthesized alternation e.g. ^(A|B)$ is invalid
+    in <field> OSRegex. Avoid parenthesized groups in field value regexes.
+-->
+
+<group name="sentinel-x,web,">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       NGINX JSON ACCESS LOG RULES
+       Nginx JSON: {"@timestamp":"...","remote_addr":"...","status":403,...}
+       Base: match on "@timestamp" which is the first key in nginx JSON.
+       ModSec JSON starts with "transaction" — no "@timestamp" at top level.
+       ═══════════════════════════════════════════════════════════ -->
+
+  <!-- Base: any nginx JSON access log event (level 0 = silent, enables child rules) -->
+  <rule id="100001" level="0">
+    <match>@timestamp</match>
+    <description>SENTINEL-X: NGINX access log event</description>
+    <group>nginx,</group>
+  </rule>
+
+  <!-- HTTP 4xx client errors -->
+  <!-- raw log: "status":4xx — integer, no quotes -->
+  <rule id="100002" level="3">
+    <if_sid>100001</if_sid>
+    <match>"status":4</match>
+    <description>SENTINEL-X: NGINX HTTP 4xx from $(srcip)</description>
+    <group>nginx,http_error,</group>
+  </rule>
+
+  <!-- HTTP 403 specifically - WAF block confirmation -->
+  <rule id="100003" level="6">
+    <if_sid>100001</if_sid>
+    <match>"status":403</match>
+    <description>SENTINEL-X: NGINX 403 Forbidden from $(srcip) - WAF block</description>
+    <group>nginx,waf_block,</group>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+  </rule>
+
+  <!-- HTTP 5xx server errors -->
+  <rule id="100004" level="5">
+    <if_sid>100001</if_sid>
+    <match>"status":5</match>
+    <description>SENTINEL-X: NGINX HTTP 5xx server error from $(srcip)</description>
+    <group>nginx,http_error,server_error,</group>
+  </rule>
+
+  <!-- Brute-force: 10x 4xx from same IP in 60s -->
+  <rule id="100006" level="10" frequency="10" timeframe="60">
+    <if_matched_sid>100002</if_matched_sid>
+    <same_field>srcip</same_field>
+    <description>SENTINEL-X: Repeated HTTP errors from $(srcip) - possible scanner</description>
+    <group>nginx,web_attack,brute_force,</group>
+    <mitre>
+      <id>T1595</id>
+    </mitre>
+  </rule>
+
+  <!-- Scanner User-Agent: match against raw user_agent JSON value -->
+  <rule id="100007" level="8">
+    <if_sid>100001</if_sid>
+    <match type="pcre2">(?i)sqlmap|nikto|masscan|dirbuster|gobuster|wfuzz|metasploit|burpsuite|zaproxy</match>
+    <description>SENTINEL-X: Security scanner detected from $(srcip)</description>
+    <group>nginx,web_attack,scanner,</group>
+    <mitre>
+      <id>T1595.001</id>
+    </mitre>
+  </rule>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       MODSECURITY JSON AUDIT LOG RULES
+       ModSec JSON: {"transaction":{"client_ip":"...","request":{...},"response":{"http_code":403},...}}
+       Base: match on first key "transaction": (unique to ModSec audit JSON).
+       Nginx JSON has "@timestamp" first — not "transaction".
+       Child rules match "http_code":403 and ruleId patterns in the raw JSON.
+       ═══════════════════════════════════════════════════════════ -->
+
+  <!-- Base: any ModSecurity audit event (level 0 = silent, enables child rules) -->
+  <rule id="100010" level="0">
+    <match>"transaction":</match>
+    <description>SENTINEL-X: ModSecurity WAF event from $(srcip)</description>
+    <group>modsecurity,waf,</group>
+  </rule>
+
+  <!-- WAF blocked request: ModSec sets http_code:403 for blocked requests -->
+  <rule id="100011" level="8">
+    <if_sid>100010</if_sid>
+    <match>"http_code":403</match>
+    <description>SENTINEL-X: ModSecurity BLOCKED request from $(srcip)</description>
+    <group>modsecurity,waf,blocked,</group>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+  </rule>
+
+  <!-- Anomaly score exceeded (CRS rule 949110) - final blocking rule -->
+  <rule id="100012" level="10">
+    <if_sid>100011</if_sid>
+    <match>"ruleId":"949110"</match>
+    <description>SENTINEL-X: WAF anomaly threshold exceeded from $(srcip) - multi-rule match</description>
+    <group>modsecurity,waf,blocked,anomaly_score,</group>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+  </rule>
+
+  <!-- SQL Injection (CRS 942xxx family) -->
+  <rule id="100020" level="12">
+    <if_sid>100011</if_sid>
+    <match>"ruleId":"942</match>
+    <description>SENTINEL-X: SQL Injection detected and blocked from $(srcip)</description>
+    <group>modsecurity,waf,blocked,sql_injection,</group>
+    <mitre>
+      <id>T1190</id>
+      <id>T1059.007</id>
+    </mitre>
+  </rule>
+
+  <!-- Cross-Site Scripting (CRS 941xxx family) -->
+  <rule id="100021" level="11">
+    <if_sid>100011</if_sid>
+    <match>"ruleId":"941</match>
+    <description>SENTINEL-X: XSS attempt detected and blocked from $(srcip)</description>
+    <group>modsecurity,waf,blocked,xss,</group>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+  </rule>
+
+  <!-- Local File Inclusion (CRS 930xxx family) -->
+  <rule id="100022" level="11">
+    <if_sid>100011</if_sid>
+    <match>"ruleId":"930</match>
+    <description>SENTINEL-X: LFI attempt detected and blocked from $(srcip)</description>
+    <group>modsecurity,waf,blocked,lfi,</group>
+    <mitre>
+      <id>T1190</id>
+      <id>T1083</id>
+    </mitre>
+  </rule>
+
+  <!-- Remote Code Execution (CRS 932xxx family) -->
+  <rule id="100023" level="14">
+    <if_sid>100011</if_sid>
+    <match>"ruleId":"932</match>
+    <description>SENTINEL-X: CRITICAL - RCE attempt detected and blocked from $(srcip)</description>
+    <group>modsecurity,waf,blocked,rce,critical,</group>
+    <mitre>
+      <id>T1190</id>
+      <id>T1059</id>
+    </mitre>
+  </rule>
+
+  <!-- Repeated WAF blocks from same IP: 5 blocks in 2 minutes -->
+  <rule id="100030" level="13" frequency="5" timeframe="120">
+    <if_matched_sid>100011</if_matched_sid>
+    <same_field>srcip</same_field>
+    <description>SENTINEL-X: Persistent attack - 5+ WAF blocks from $(srcip) in 2 minutes</description>
+    <group>modsecurity,waf,blocked,persistent_attack,</group>
+    <mitre>
+      <id>T1190</id>
+      <id>T1595</id>
+    </mitre>
+  </rule>
+
+
+</group>

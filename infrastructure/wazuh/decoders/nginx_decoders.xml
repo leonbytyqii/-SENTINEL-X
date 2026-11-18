@@ -1,0 +1,33 @@
+<!-- SENTINEL-X: Wazuh Decoder - NGINX JSON access log -->
+<!--
+  Matches the json_waf format defined in infrastructure/nginx/conf.d/sentinel_json_log.conf
+  Each log line is a single-line JSON object starting with {"@timestamp".
+
+  After JSON_Decoder, fields are accessible in rules as data.<fieldname>:
+    data.remote_addr  - client IP
+    data.method       - HTTP method
+    data.uri          - request URI with query string
+    data.status       - HTTP status code (integer)
+    data.user_agent   - User-Agent header value
+    data.request_time - upstream response time
+
+  The child decoder extracts srcip explicitly for Wazuh IP enrichment.
+-->
+
+<!-- SENTINEL-X nginx JSON decoder
+     Wazuh analysisd auto-processes JSON before the decoder chain: {, } and " are stripped,
+     fields become "key:value\n" lines. The first line of our nginx JSON events is
+     "@timestamp:2026-...". Prematch "@timestamp" (no braces) catches this.
+     data.* fields are already populated by Wazuh's JSON pre-decoder; no JSON_Decoder needed.
+     log_format:json in ossec.conf triggers this auto-processing.
+-->
+<decoder name="sentinel-nginx-json">
+  <prematch>@timestamp</prematch>
+</decoder>
+
+<!-- Extract srcip from pre-processed format: "remote_addr:172.20.0.1" -->
+<decoder name="sentinel-nginx-json-srcip">
+  <parent>sentinel-nginx-json</parent>
+  <regex offset="after_prematch">remote_addr:(\d+\.\d+\.\d+\.\d+)</regex>
+  <order>srcip</order>
+</decoder>

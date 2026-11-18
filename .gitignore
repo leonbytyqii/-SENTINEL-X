@@ -1,0 +1,45 @@
+# SENTINEL-X .gitignore
+
+# Environment files with real credentials
+.env
+
+# Secrets directory
+secrets/*
+!secrets/.gitkeep
+
+# Generated evidence/logs (large, sensitive)
+evidence/logs/*
+evidence/screenshots/*
+evidence/test-results/*
+!evidence/**/.gitkeep
+
+# nginx runtime logs
+infrastructure/nginx/logs/*
+!infrastructure/nginx/logs/.gitkeep
+
+# Docker volumes (if accidentally exported)
+*.tar.gz
+volumes/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Backup files
+*.bak
+*.bak3
+*.bak-*
+*.backup

@@ -1,0 +1,19 @@
+<!-- SENTINEL-X – Wazuh Decoder: ModSecurity JSON audit log -->
+<!-- ModSecurity configured with SecAuditLogFormat JSON in modsecurity-override.conf -->
+
+<decoder name="sentinel-modsecurity">
+  <prematch>{"transaction"</prematch>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>
+
+<!-- Extract transaction fields -->
+<decoder name="sentinel-modsecurity-child">
+  <parent>sentinel-modsecurity</parent>
+  <use_own_name>true</use_own_name>
+  <json_null_field>discard</json_null_field>
+  <!-- transaction.client_ip → srcip for geo/reputation correlation -->
+  <var name="json.transaction.client_ip">srcip</var>
+  <var name="json.transaction.request.uri">url</var>
+  <var name="json.transaction.request.method">protocol</var>
+  <var name="json.transaction.response.http_code">status_code</var>
+</decoder>

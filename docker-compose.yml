@@ -1,0 +1,525 @@
+# SENTINEL-X – docker-compose.yml
+# Full security monitoring stack: NGINX+ModSecurity → Wazuh → Elasticsearch → Kibana
+# Start: docker compose up -d
+# Stop (keep data): docker compose down
+# Stop (destroy data): docker compose down -v   ← destructive, see DEPLOYMENT-GUIDE.md
+
+# ═══════════════════════════════════════════════════════
+#  NETWORKS
+#  - frontend_net  : external traffic ingress
+#  - application_net: nginx-waf ↔ webapp (no direct host exposure)
+#  - monitoring_net : wazuh-manager reads logs from shared volume
+#  - analytics_net  : wazuh-manager → filebeat → elasticsearch → kibana
+# ═══════════════════════════════════════════════════════
+networks:
+  frontend_net:
+    driver: bridge
+    name: sentinel_frontend
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  application_net:
+    driver: bridge
+    name: sentinel_application
+    internal: true          # no direct internet access
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+
+  monitoring_net:
+    driver: bridge
+    name: sentinel_monitoring
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+
+  analytics_net:
+    driver: bridge
+    name: sentinel_analytics
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.3.0/24
+
+  management_net:
+    driver: bridge
+    name: sentinel_management
+    ipam:
+      config:
+        - subnet: 172.20.4.0/24
+
+  wazuh_stack_net:
+    driver: bridge
+    name: sentinel_wazuh_stack
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.20.5.0/24
+
+# ═══════════════════════════════════════════════════════
+#  VOLUMES
+# ═══════════════════════════════════════════════════════
+volumes:
+  nginx_logs:
+    name: sentinel_nginx_logs
+  modsec_logs:
+    name: sentinel_modsec_logs
+  wazuh_data:
+    name: sentinel_wazuh_data
+  wazuh_logs:
+    name: sentinel_wazuh_logs
+  wazuh_queue:
+    name: sentinel_wazuh_queue
+  wazuh_multigroups:
+    name: sentinel_wazuh_multigroups
+  wazuh_integrations:
+    name: sentinel_wazuh_integrations
+  wazuh_active_response:
+    name: sentinel_wazuh_active_response
+  wazuh_agentless:
+    name: sentinel_wazuh_agentless
+  wazuh_wodles:
+    name: sentinel_wazuh_wodles
+  filebeat_data:
+    name: sentinel_filebeat_data
+  elasticsearch_data:
+    name: sentinel_elasticsearch_data
+  kibana_data:
+    name: sentinel_kibana_data
+  wazuh_indexer_data:
+    name: sentinel_wazuh_indexer_data
+  wazuh_dashboard_data:
+    name: sentinel_wazuh_dashboard_data
+  filebeat_wazuh_data:
+    name: sentinel_filebeat_wazuh_data
+
+# ═══════════════════════════════════════════════════════
+#  SERVICES
+# ═══════════════════════════════════════════════════════
+services:
+
+  # ─────────────────────────────────────────────────────
+  #  1. NGINX + ModSecurity WAF (entry point)
+  #     - owasp/modsecurity-crs bundles ModSecurity v3 + CRS v4
+  #     - Only container exposed to the host
+  # ─────────────────────────────────────────────────────
+  nginx-waf:
+    image: owasp/modsecurity-crs:nginx-alpine
+    container_name: sentinel_nginx_waf
+    restart: unless-stopped
+    networks:
+      - frontend_net
+      - application_net
+    ports:
+      - "80:8080"      # host:container — image runs on 8080 (unprivileged user)
+    environment:
+      BACKEND: "http://webapp:8080"
+      MODSEC_RULE_ENGINE: "${MODSEC_RULE_ENGINE:-DetectionOnly}"
+      ANOMALY_INBOUND: "${ANOMALY_INBOUND:-5}"
+      ANOMALY_OUTBOUND: "${ANOMALY_OUTBOUND:-4}"
+      PORT: "8080"      # OWASP CRS image listens on 8080 (non-root)
+      DNS_SERVER: "127.0.0.11"
+      NGINX_ALWAYS_TLS_REDIRECT: "false"
+      MODSEC_REQ_BODY_ACCESS: "On"
+      MODSEC_RESP_BODY_ACCESS: "On"
+      MODSEC_REQ_BODY_LIMIT: "13107200"
+      MODSEC_PCRE_MATCH_LIMIT: "100000"
+      MODSEC_PCRE_MATCH_LIMIT_RECURSION: "100000"
+      PARANOIA: "${CRS_PARANOIA_LEVEL:-1}"
+      # ModSecurity settings via env vars (avoids conflicting with init script file generation)
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+      MODSEC_AUDIT_LOG: "/var/log/modsecurity/audit/modsec_audit.log"
+      MODSEC_AUDIT_LOG_FORMAT: "JSON"
+      MODSEC_AUDIT_LOG_TYPE: "Serial"
+      MODSEC_DEBUG_LOG: "/dev/null"
+      MODSEC_DEBUG_LOGLEVEL: "0"
+      # Persistent log files (Wazuh reads from these paths)
+      ACCESSLOG: "/var/log/nginx/access.log"
+      ERRORLOG: "/var/log/nginx/error.log"
+    volumes:
+      # Exclusion rules (static files in image, safe to override)
+      - ./infrastructure/modsecurity/exclusions/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:ro
+      - ./infrastructure/modsecurity/exclusions/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:/etc/modsecurity.d/owasp-crs/rules/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf:ro
+      # JSON access log: adds log_format json_waf + access_log /var/log/nginx/access_json.log
+      - ./infrastructure/nginx/conf.d/sentinel_json_log.conf:/etc/nginx/conf.d/sentinel_json_log.conf:ro
+      # Shared log volumes for Wazuh to read
+      - nginx_logs:/var/log/nginx
+      - modsec_logs:/var/log/modsecurity
+    depends_on:
+      webapp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+  # ─────────────────────────────────────────────────────
+  #  2. Protected Test Web Application
+  #     - Minimal Flask app with intentional WAF-trigger patterns
+  #     - Internal only: not accessible from host directly
+  # ─────────────────────────────────────────────────────
+  webapp:
+    build:
+      context: ./applications/vulnerable-lab
+      dockerfile: Dockerfile
+    container_name: sentinel_webapp
+    restart: unless-stopped
+    networks:
+      - application_net
+    # NO port mapping to host — only reachable via nginx-waf
+    environment:
+      FLASK_ENV: development
+      FLASK_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ─────────────────────────────────────────────────────
+  #  3. Wazuh Manager (SIEM engine)
+  #     - Reads NGINX + ModSecurity logs from shared volumes
+  #     - Generates alerts → /var/ossec/logs/alerts/alerts.json
+  #     - Filebeat reads those alerts and forwards to Elasticsearch
+  # ─────────────────────────────────────────────────────
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.9.2
+    container_name: sentinel_wazuh_manager
+    restart: unless-stopped
+    networks:
+      monitoring_net: {}
+      analytics_net: {}
+      wazuh_stack_net:
+        aliases:
+          - wazuh-manager
+    ports:
+      - "55000:55000"   # Wazuh API (analyst access only)
+      # 1514/1515 intentionally NOT exposed to host — internal monitoring only
+    environment:
+      WAZUH_MANAGER_CUSTOM_PASSWORD: "${WAZUH_API_PASSWORD:-changeme_wazuh_api}"
+      API_USERNAME: "${WAZUH_API_USER:-wazuh-wui}"
+      API_PASSWORD: "${WAZUH_API_PASSWORD:-changeme_wazuh_api}"
+    volumes:
+      # Wazuh data persistence
+      - wazuh_data:/var/ossec/data
+      - wazuh_logs:/var/ossec/logs
+      - wazuh_queue:/var/ossec/queue
+      - wazuh_multigroups:/var/ossec/multigroups
+      - wazuh_integrations:/var/ossec/integrations
+      - wazuh_active_response:/var/ossec/active-response/bin
+      - wazuh_agentless:/var/ossec/agentless
+      - wazuh_wodles:/var/ossec/wodles
+      # Custom OSSEC/Wazuh configuration
+      - ./infrastructure/wazuh/manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      # Init script: creates etc/shared/ar.conf before 2-manager runs config test
+      - ./infrastructure/wazuh/manager/init-shared.sh:/etc/cont-init.d/1a-create-shared:ro
+      # Custom decoders and rules
+      - ./infrastructure/wazuh/decoders:/var/ossec/etc/decoders/sentinel-x:ro
+      - ./infrastructure/wazuh/rules:/var/ossec/etc/rules/sentinel-x:ro
+      # Wazuh-stack filebeat config (ships alerts to wazuh-indexer)
+      - ./infrastructure/wazuh-stack/filebeat/filebeat-manager.yml:/etc/filebeat/filebeat.yml:ro
+      - ./infrastructure/wazuh-stack/certs/root-ca.pem:/etc/filebeat/certs/root-ca.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-manager.pem:/etc/filebeat/certs/wazuh-manager.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-manager.key:/etc/filebeat/certs/wazuh-manager.key:ro
+      # Shared log volumes — no :ro here; Wazuh init scripts chown these paths
+      # Wazuh reads but does not write to these locations
+      - nginx_logs:/var/log/nginx
+      - modsec_logs:/var/log/modsecurity
+    healthcheck:
+      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'is running'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ─────────────────────────────────────────────────────
+  #  4. Filebeat (alert forwarding: Wazuh → Elasticsearch)
+  #     - Reads /var/ossec/logs/alerts/alerts.json
+  #     - Sends to Elasticsearch wazuh-alerts-* index
+  # ─────────────────────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.3
+    container_name: sentinel_filebeat
+    restart: always
+    networks:
+      - analytics_net
+    user: root   # required to read Wazuh alert files
+    environment:
+      ELASTICSEARCH_HOST: "http://elasticsearch:9200"
+      ELASTICSEARCH_USERNAME: "elastic"
+      ELASTICSEARCH_PASSWORD: "${ELASTIC_PASSWORD:-changeme_elastic_lab}"
+    volumes:
+      - ./infrastructure/ingestion/config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # Read Wazuh alerts (read-only)
+      - wazuh_logs:/var/ossec/logs:ro
+      # Filebeat state persistence
+      - filebeat_data:/usr/share/filebeat/data
+    command: filebeat -e -strict.perms=false
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      wazuh-manager:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+  # ─────────────────────────────────────────────────────
+  #  5. Elasticsearch (centralized storage & analytics)
+  #     - Security disabled for lab environment (documented in TECHNICAL-DECISIONS.md)
+  #     - Internal access only — not exposed to host network
+  # ─────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: sentinel_elasticsearch
+    restart: unless-stopped
+    networks:
+      - analytics_net
+      - management_net
+    ports:
+      - "9200:9200"   # host access for scripts and Kibana init
+    environment:
+      node.name: sentinel-es01
+      cluster.name: sentinel-x-cluster
+      discovery.type: single-node
+      ELASTIC_PASSWORD: "${ELASTIC_PASSWORD:-changeme_elastic_lab}"
+      ES_JAVA_OPTS: "${ES_JAVA_OPTS:--Xms2g -Xmx2g}"
+      # Security enabled with simple username/password (no TLS in single-node lab)
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      xpack.license.self_generated.type: basic
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./infrastructure/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD:-changeme_elastic_lab} http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ─────────────────────────────────────────────────────
+  #  6. Kibana (security analyst dashboard)
+  #     - Standard Kibana with custom index patterns
+  #     - Security Operations / WAF / SIEM dashboards
+  # ─────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    container_name: sentinel_kibana
+    restart: unless-stopped
+    networks:
+      - analytics_net
+      - management_net
+    ports:
+      - "5601:5601"   # host access for browser dashboard
+    environment:
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+      ELASTICSEARCH_USERNAME: "kibana_system"
+      ELASTICSEARCH_PASSWORD: "${KIBANA_PASSWORD:-changeme_kibana_lab}"
+      XPACK_SECURITY_ENCRYPTIONKEY: "sentinel-x-encryption-key-32chars-min"
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: "sentinel-x-so-encryption-key-min32"
+      XPACK_REPORTING_ENCRYPTIONKEY: "sentinel-x-reporting-encryption-key"
+      SERVER_NAME: "sentinel-kibana"
+      TELEMETRY_ENABLED: "false"
+      NEWSFEED_ENABLED: "false"
+    volumes:
+      - kibana_data:/usr/share/kibana/data
+      - ./infrastructure/dashboards/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q 'available'"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+
+  # ─────────────────────────────────────────────────────
+  #  7. Wazuh Indexer (OpenSearch-based, official Wazuh storage)
+  #     - Official Wazuh Indexer 4.9.2 (matches manager version)
+  #     - Receives alerts from manager's internal Filebeat via TLS
+  #     - Wazuh Dashboard reads from this, NOT from Elasticsearch
+  # ─────────────────────────────────────────────────────
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.9.2
+    container_name: sentinel_wazuh_indexer
+    hostname: wazuh-indexer
+    restart: unless-stopped
+    networks:
+      - wazuh_stack_net
+    ports:
+      - "9201:9200"
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms2g -Xmx2g"
+      bootstrap.memory_lock: "true"
+    volumes:
+      - wazuh_indexer_data:/var/lib/wazuh-indexer
+      - ./infrastructure/wazuh-stack/indexer/config/wazuh-indexer.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - ./infrastructure/wazuh-stack/indexer/opensearch-security/internal_users.yml:/usr/share/wazuh-indexer/plugins/opensearch-security/securityconfig/internal_users.yml:ro
+      - ./infrastructure/wazuh-stack/certs/root-ca.pem:/usr/share/wazuh-indexer/certs/root-ca.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key:ro
+      - ./infrastructure/wazuh-stack/certs/admin.pem:/usr/share/wazuh-indexer/certs/admin.pem:ro
+      - ./infrastructure/wazuh-stack/certs/admin.key:/usr/share/wazuh-indexer/certs/admin.key:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ks -u admin:SecretPassword https://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ─────────────────────────────────────────────────────
+  #  8. Wazuh Dashboard (OpenSearch Dashboards-based)
+  #     - Official Wazuh Dashboard 4.9.2
+  #     - Connects to: wazuh-indexer (data) + wazuh-manager API (55000)
+  #     - Accessible at https://localhost:5602
+  #     - Login: admin / SecretPassword
+  # ─────────────────────────────────────────────────────
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.9.2
+    container_name: sentinel_wazuh_dashboard
+    hostname: wazuh-dashboard
+    restart: unless-stopped
+    networks:
+      - wazuh_stack_net
+      - management_net
+    ports:
+      - "5602:5601"
+    environment:
+      INDEXER_USERNAME: "admin"
+      INDEXER_PASSWORD: "SecretPassword"
+      WAZUH_API_URL: "https://wazuh-manager"
+      DASHBOARD_USERNAME: "kibanaserver"
+      DASHBOARD_PASSWORD: "SecretPassword"
+    volumes:
+      - wazuh_dashboard_data:/usr/share/wazuh-dashboard/data
+      - ./infrastructure/wazuh-stack/dashboard/config/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - ./infrastructure/wazuh-stack/dashboard/config/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml:ro
+      - ./infrastructure/wazuh-stack/certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-dashboard.key:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.key:ro
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ksL https://localhost:5601/app/wz-home | grep -qi 'wazuh'"]
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ─────────────────────────────────────────────────────
+  #  9. Filebeat → Wazuh Indexer (second Filebeat pipeline)
+  #     - Ships same alerts.json to wazuh-indexer (OpenSearch)
+  #     - Uses Wazuh Filebeat module + wazuh-template.json
+  #     - Separate state volume; does not conflict with ES pipeline
+  # ─────────────────────────────────────────────────────
+  filebeat-wazuh:
+    image: docker.elastic.co/beats/filebeat-oss:7.10.2
+    container_name: sentinel_filebeat_wazuh
+    restart: always
+    networks:
+      - wazuh_stack_net
+    user: root
+    volumes:
+      - ./infrastructure/wazuh-stack/filebeat/filebeat-wazuh.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./infrastructure/wazuh-stack/filebeat/wazuh-template.json:/usr/share/filebeat/module/wazuh-template.json:ro
+      - ./infrastructure/wazuh-stack/filebeat/module-wazuh:/usr/share/filebeat/module/wazuh:ro
+      - wazuh_logs:/var/ossec/logs:ro
+      - filebeat_wazuh_data:/usr/share/filebeat/data
+      - ./infrastructure/wazuh-stack/certs/root-ca.pem:/etc/ssl/root-ca.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-manager.pem:/etc/ssl/wazuh-manager.pem:ro
+      - ./infrastructure/wazuh-stack/certs/wazuh-manager.key:/etc/ssl/wazuh-manager.key:ro
+    command: filebeat -e -strict.perms=false
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
