@@ -23,4 +23,7 @@ opensearch_security.readonly_mode.roles: ["kibana_read_only"]
 # /app/wazuh does not exist in 4.9.2; the registered app ID is wz-home
 uiSettings.overrides.defaultRoute: "/app/wz-home"
 
+# Skip saved objects migration — avoids race condition in multi-worker startup
+migrations.skip: true
+
 # Telemetry — keys removed; not supported in this Wazuh Dashboard build
