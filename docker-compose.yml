@@ -263,8 +263,8 @@ services:
           memory: 256M
     ulimits:
       nofile:
-        soft: 65536
-        hard: 65536
+        soft: 458752
+        hard: 458752
 
   # ─────────────────────────────────────────────────────
   #  4. Filebeat (alert forwarding: Wazuh → Elasticsearch)
